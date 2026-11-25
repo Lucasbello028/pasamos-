@@ -322,15 +322,73 @@ const SEED_PRODUCTOS: Producto[] = [
   },
 ];
 
-function getSupabaseClient(): SupabaseClient | null {
-  const url = process.env.SUPABASE_URL?.trim();
-  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)?.trim();
-  if (!url || !key) {
+function normalizeSecretValue(raw: string | undefined, expectedPrefix?: string): string {
+  if (!raw) return '';
+  let val = raw.trim().replace(/^['"]+|['"]+$/g, '');
+  if (expectedPrefix && val.startsWith(`${expectedPrefix}=`)) {
+    val = val.slice(expectedPrefix.length + 1).trim().replace(/^['"]+|['"]+$/g, '');
+  }
+  return val;
+}
+
+function resolveSupabaseUrl(rawUrl: string): string | null {
+  if (!rawUrl || rawUrl.toUpperCase().startsWith('MY_')) {
     return null;
   }
-  return createClient(url, key, {
-    auth: { persistSession: false },
-  });
+
+  let candidate = rawUrl;
+  if (/^[a-z0-9]{12,32}$/i.test(candidate)) {
+    candidate = `https://${candidate}.supabase.co`;
+  } else if (!/^https?:\/\//i.test(candidate) && candidate.includes('.')) {
+    candidate = `https://${candidate}`;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+function getSupabaseClient(): { client: SupabaseClient | null; warning?: string } {
+  const rawUrl =
+    normalizeSecretValue(process.env.SUPABASE_URL, 'SUPABASE_URL') ||
+    normalizeSecretValue(process.env.NEXT_PUBLIC_SUPABASE_URL, 'NEXT_PUBLIC_SUPABASE_URL');
+
+  const rawKey =
+    normalizeSecretValue(process.env.SUPABASE_SERVICE_ROLE_KEY, 'SUPABASE_SERVICE_ROLE_KEY') ||
+    normalizeSecretValue(process.env.SUPABASE_ANON_KEY, 'SUPABASE_ANON_KEY') ||
+    normalizeSecretValue(process.env.SUPABASE_PUBLISHABLE_KEY, 'SUPABASE_PUBLISHABLE_KEY') ||
+    normalizeSecretValue(process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, 'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY') ||
+    normalizeSecretValue(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY, 'NEXT_PUBLIC_SUPABASE_ANON_KEY');
+
+  if (!rawUrl || !rawKey) {
+    return { client: null };
+  }
+
+  const resolvedUrl = resolveSupabaseUrl(rawUrl);
+  if (!resolvedUrl) {
+    return {
+      client: null,
+      warning: 'URL de Supabase inválida en Secrets; usando base local.',
+    };
+  }
+
+  try {
+    const client = createClient(resolvedUrl, rawKey, {
+      auth: { persistSession: false },
+    });
+    return { client };
+  } catch {
+    return {
+      client: null,
+      warning: 'No se pudo inicializar cliente Supabase; usando base local.',
+    };
+  }
 }
 
 function ensureLocalDataFile(): PersistedState {
@@ -359,7 +417,7 @@ function saveLocalDataFile(state: PersistedState): void {
 
 export async function getDatabaseSnapshot(): Promise<AgroDatabaseSnapshot> {
   const local = ensureLocalDataFile();
-  const supabase = getSupabaseClient();
+  const { client: supabase, warning } = getSupabaseClient();
 
   if (supabase) {
     try {
@@ -368,17 +426,33 @@ export async function getDatabaseSnapshot(): Promise<AgroDatabaseSnapshot> {
         supabase.from('productos').select('*').order('nombre', { ascending: true }),
       ]);
 
-      if (!provRes.error && !prodRes.error && provRes.data && prodRes.data.length > 0) {
-        return {
-          proveedores: provRes.data as Proveedor[],
-          productos: (prodRes.data ?? []) as Producto[],
-          reglas: local.reglas,
-          source: {
-            mode: 'supabase',
-            label: 'PostgreSQL en Supabase (En vivo)',
-            supabaseConfigured: true,
-          },
-        };
+      if (!provRes.error && !prodRes.error) {
+        let proveedores = (provRes.data ?? []) as Proveedor[];
+        let productos = (prodRes.data ?? []) as Producto[];
+
+        if (proveedores.length === 0 && productos.length === 0) {
+          const seedProv = await supabase.from('proveedores').insert(local.proveedores).select();
+          const seedProd = await supabase.from('productos').insert(local.productos).select();
+          if (!seedProv.error && seedProv.data) {
+            proveedores = seedProv.data as Proveedor[];
+          }
+          if (!seedProd.error && seedProd.data) {
+            productos = seedProd.data as Producto[];
+          }
+        }
+
+        if (proveedores.length > 0 || productos.length > 0) {
+          return {
+            proveedores,
+            productos,
+            reglas: local.reglas,
+            source: {
+              mode: 'supabase',
+              label: 'PostgreSQL en Supabase (En vivo)',
+              supabaseConfigured: true,
+            },
+          };
+        }
       }
     } catch (err) {
       console.warn('Supabase fallback to local persistent store:', err);
@@ -391,7 +465,9 @@ export async function getDatabaseSnapshot(): Promise<AgroDatabaseSnapshot> {
     reglas: local.reglas,
     source: {
       mode: 'local',
-      label: supabase
+      label: warning
+        ? warning
+        : supabase
         ? 'Almacenamiento local sincronizado (tablas Supabase pendientes)'
         : 'Base de datos local persistente (esquema Supabase)',
       supabaseConfigured: Boolean(supabase),
@@ -408,7 +484,7 @@ export async function createProducto(
     disponible: input.stock > 0 ? input.disponible : false,
   };
 
-  const supabase = getSupabaseClient();
+  const { client: supabase } = getSupabaseClient();
   if (supabase) {
     const { data, error } = await supabase
       .from('productos')
@@ -430,7 +506,7 @@ export async function updateProducto(
   id: string,
   patch: Partial<Producto>
 ): Promise<Producto | null> {
-  const supabase = getSupabaseClient();
+  const { client: supabase } = getSupabaseClient();
   if (supabase) {
     const { data, error } = await supabase
       .from('productos')
@@ -460,7 +536,7 @@ export async function updateProducto(
 }
 
 export async function deleteProducto(id: string): Promise<boolean> {
-  const supabase = getSupabaseClient();
+  const { client: supabase } = getSupabaseClient();
   if (supabase) {
     const { error } = await supabase.from('productos').delete().eq('id', id);
     if (!error) {
@@ -484,7 +560,7 @@ export async function createProveedor(
     id: `prov-${Date.now().toString(36)}`,
   };
 
-  const supabase = getSupabaseClient();
+  const { client: supabase } = getSupabaseClient();
   if (supabase) {
     const { data, error } = await supabase
       .from('proveedores')

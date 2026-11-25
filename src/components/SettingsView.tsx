@@ -253,8 +253,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         <p className="text-xs text-[#5C564D] leading-relaxed">
           Estado actual: <strong className="text-[#2B2B2B]">{source.label}</strong>.
-          Cuando las variables de entorno <code className="font-mono">SUPABASE_URL</code> y{' '}
-          <code className="font-mono">SUPABASE_ANON_KEY</code> están definidas en el servidor con las tablas siguientes, las consultas leen y escriben directamente en PostgreSQL.
+          Cuando las variables de entorno <code className="font-mono">NEXT_PUBLIC_SUPABASE_URL</code> y{' '}
+          <code className="font-mono">NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> (o{' '}
+          <code className="font-mono">SUPABASE_URL</code> /{' '}
+          <code className="font-mono">SUPABASE_ANON_KEY</code>) están definidas en{' '}
+          <strong>Settings &gt; Secrets</strong> con las tablas siguientes, las consultas leen y escriben directamente en PostgreSQL.
         </p>
 
         <div className="relative">
