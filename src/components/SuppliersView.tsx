@@ -1,22 +1,30 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Mail, MapPin, Phone, Plus } from 'lucide-react';
+import { SuppliersMap } from './SuppliersMap';
 import type { Producto, Proveedor } from '../types/agro';
 
 interface SuppliersViewProps {
   proveedores: Proveedor[];
   productos: Producto[];
+  mapsApiKey: string;
   onRefresh: () => Promise<void>;
 }
 
 export const SuppliersView: React.FC<SuppliersViewProps> = ({
   proveedores,
   productos,
+  mapsApiKey,
   onRefresh,
 }) => {
   const [search, setSearch] = useState('');
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(
+    proveedores[0]?.id ?? null
+  );
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+
   const [form, setForm] = useState({
     nombre: '',
     categoria_principal: 'Semillas y Vivero',
@@ -26,14 +34,16 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
     telefono: '',
     email: '',
     horario: 'Lun a Sáb · 08:00 a 18:00',
+    latitud: '-25.2968',
+    longitud: '-57.5850',
     notas: '',
   });
 
   const productCountByProvider = useMemo(() => {
-    const counts = new Map<string, number>();
-    productos.forEach((p) => {
-      counts.set(p.proveedor_id, (counts.get(p.proveedor_id) || 0) + 1);
-    });
+    const counts: Record<string, number> = {};
+    for (const p of productos) {
+      counts[p.proveedor_id] = (counts[p.proveedor_id] || 0) + 1;
+    }
     return counts;
   }, [productos]);
 
@@ -54,6 +64,11 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
     );
   }, [proveedores, search]);
 
+  const handleFocusOnMap = (id: string) => {
+    setSelectedSupplierId(id);
+    mapContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -66,13 +81,18 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
       const res = await fetch('/api/proveedores', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          latitud: Number(form.latitud),
+          longitud: Number(form.longitud),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data?.error || 'No se pudo registrar el proveedor.');
       }
       await onRefresh();
+      setSelectedSupplierId(data.id);
       setShowModal(false);
       setForm({
         nombre: '',
@@ -83,6 +103,8 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
         telefono: '',
         email: '',
         horario: 'Lun a Sáb · 08:00 a 18:00',
+        latitud: '-25.2968',
+        longitud: '-57.5850',
         notas: '',
       });
     } catch (err) {
@@ -97,10 +119,10 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
       <div className="bg-[#FFFFFF] border border-[#E5DEC9] rounded-lg p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="font-display text-2xl font-semibold text-[#2B2B2B]">
-            Directorio de Proveedores y Viveros
+            Directorio y Mapa de Proveedores
           </h2>
           <p className="text-sm text-[#666057] mt-1">
-            {proveedores.length} establecimientos verificados con contacto y ubicación en Paraguay
+            {proveedores.length} establecimientos verificados con coordenadas, contacto e insumos en Paraguay
           </p>
         </div>
 
@@ -127,13 +149,26 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
         </div>
       </div>
 
+      <div ref={mapContainerRef}>
+        <SuppliersMap
+          apiKey={mapsApiKey}
+          proveedores={filteredSuppliers}
+          productos={productos}
+          selectedSupplierId={selectedSupplierId}
+          onSelectSupplier={setSelectedSupplierId}
+        />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {filteredSuppliers.map((prov) => {
-          const itemCount = productCountByProvider.get(prov.id) || 0;
+          const itemCount = productCountByProvider[prov.id] || 0;
+          const isSelected = selectedSupplierId === prov.id;
           return (
             <article
               key={prov.id}
-              className="bg-[#FFFFFF] border border-[#E5DEC9] rounded-lg p-6 flex flex-col justify-between"
+              className={`bg-[#FFFFFF] border rounded-lg p-6 flex flex-col justify-between transition-colors ${
+                isSelected ? 'border-[#C5A059]' : 'border-[#E5DEC9]'
+              }`}
             >
               <div>
                 <div className="flex items-baseline justify-between gap-4">
@@ -160,34 +195,53 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                 )}
               </div>
 
-              <dl className="mt-5 pt-4 border-t border-[#EFE9DB] space-y-2 text-sm text-[#38342E]">
-                <div className="flex items-start gap-2.5">
-                  <MapPin
-                    className="w-4 h-4 text-[#8A7240] shrink-0 mt-0.5"
-                    aria-hidden="true"
-                  />
-                  <span>{prov.direccion}</span>
-                </div>
-                <div className="flex items-center gap-2.5">
-                  <Phone
-                    className="w-4 h-4 text-[#8A7240] shrink-0"
-                    aria-hidden="true"
-                  />
-                  <span className="font-mono text-xs tabular-nums">
-                    {prov.telefono}
-                  </span>
-                  <span className="text-[#666057] text-xs">· {prov.horario}</span>
-                </div>
-                {prov.email && (
+              <div className="mt-5 pt-4 border-t border-[#EFE9DB] space-y-3">
+                <dl className="space-y-2 text-sm text-[#38342E]">
+                  <div className="flex items-start gap-2.5">
+                    <MapPin
+                      className="w-4 h-4 text-[#8A7240] shrink-0 mt-0.5"
+                      aria-hidden="true"
+                    />
+                    <span>{prov.direccion}</span>
+                  </div>
                   <div className="flex items-center gap-2.5">
-                    <Mail
+                    <Phone
                       className="w-4 h-4 text-[#8A7240] shrink-0"
                       aria-hidden="true"
                     />
-                    <span className="text-xs text-[#5C564D]">{prov.email}</span>
+                    <span className="font-mono text-xs tabular-nums">
+                      {prov.telefono}
+                    </span>
+                    <span className="text-[#666057] text-xs">· {prov.horario}</span>
                   </div>
-                )}
-              </dl>
+                  {prov.email && (
+                    <div className="flex items-center gap-2.5">
+                      <Mail
+                        className="w-4 h-4 text-[#8A7240] shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span className="text-xs text-[#5C564D]">{prov.email}</span>
+                    </div>
+                  )}
+                </dl>
+
+                <div className="pt-2 flex items-center justify-between gap-2 text-xs">
+                  <span className="font-mono text-[11px] text-[#666057] tabular-nums">
+                    {prov.latitud.toFixed(4)}, {prov.longitud.toFixed(4)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleFocusOnMap(prov.id)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded border transition-colors whitespace-nowrap shrink-0 ${
+                      isSelected
+                        ? 'bg-[#2B2B2B] text-[#FFFFFF] border-[#2B2B2B]'
+                        : 'bg-[#FAF7F2] text-[#2B2B2B] border-[#D9D0BE] hover:border-[#C5A059]'
+                    }`}
+                  >
+                    {isSelected ? 'Seleccionado en mapa' : 'Ver en mapa'}
+                  </button>
+                </div>
+              </div>
             </article>
           );
         })}
@@ -288,6 +342,35 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                   placeholder="Av. España 1234"
                   className="w-full px-3 py-2 text-sm bg-[#FAF7F2] border border-[#D9D0BE] rounded focus:outline-none focus:bg-[#FFFFFF] focus:border-[#C5A059]"
                 />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-[#2B2B2B] mb-1">
+                    Latitud
+                  </label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    required
+                    value={form.latitud}
+                    onChange={(e) => setForm((s) => ({ ...s, latitud: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm font-mono bg-[#FAF7F2] border border-[#D9D0BE] rounded focus:outline-none focus:bg-[#FFFFFF] focus:border-[#C5A059]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[#2B2B2B] mb-1">
+                    Longitud
+                  </label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    required
+                    value={form.longitud}
+                    onChange={(e) => setForm((s) => ({ ...s, longitud: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm font-mono bg-[#FAF7F2] border border-[#D9D0BE] rounded focus:outline-none focus:bg-[#FFFFFF] focus:border-[#C5A059]"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

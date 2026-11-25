@@ -42,6 +42,8 @@ const SEED_PROVEEDORES: Proveedor[] = [
     telefono: '+595 21 604 820',
     email: 'ventas@viveroeldorado.com.py',
     horario: 'Lun a Sáb · 08:00 a 18:00',
+    latitud: -25.2917,
+    longitud: -57.5812,
     notas: 'Especialistas en horticultura urbana, semillas certificadas y sustratos finos.',
   },
   {
@@ -54,6 +56,8 @@ const SEED_PROVEEDORES: Proveedor[] = [
     telefono: '+595 21 612 490',
     email: 'contacto@riegoguarani.com.py',
     horario: 'Lun a Vie · 08:00 a 17:30 · Sáb · 08:30 a 12:30',
+    latitud: -25.2836,
+    longitud: -57.5718,
     notas: 'Asesoramiento técnico en riego por goteo, aspersión en bronce y automatización.',
   },
   {
@@ -66,6 +70,8 @@ const SEED_PROVEEDORES: Proveedor[] = [
     telefono: '+595 21 520 315',
     email: 'pedidos@semilleriadelsur.com.py',
     horario: 'Lun a Sáb · 07:00 a 17:00',
+    latitud: -25.3248,
+    longitud: -57.5624,
     notas: 'Distribución mayorista y minorista de variedades adaptadas al clima subtropical.',
   },
   {
@@ -78,6 +84,8 @@ const SEED_PROVEEDORES: Proveedor[] = [
     telefono: '+595 981 445 210',
     email: 'asesoria@huertavillamorra.com.py',
     horario: 'Lun a Sáb · 08:30 a 18:30',
+    latitud: -25.2825,
+    longitud: -57.6083,
     notas: 'Herramientas de acero forjado, lanzas de riego en latón y semillas de polinización abierta.',
   },
   {
@@ -90,6 +98,8 @@ const SEED_PROVEEDORES: Proveedor[] = [
     telefono: '+595 21 584 900',
     email: 'logistica@tierrafertil.com.py',
     horario: 'Lun a Sáb · 07:30 a 17:30',
+    latitud: -25.3396,
+    longitud: -57.5112,
     notas: 'Producción propia de humus de lombriz roja californiana y compost madurado.',
   },
 ];
@@ -391,6 +401,27 @@ function getSupabaseClient(): { client: SupabaseClient | null; warning?: string 
   }
 }
 
+function withDefaultCoordinates(proveedores: Proveedor[]): Proveedor[] {
+  const seedById: Record<string, { latitud: number; longitud: number }> = {};
+  for (const s of SEED_PROVEEDORES) {
+    seedById[s.id] = { latitud: s.latitud, longitud: s.longitud };
+  }
+  return proveedores.map((p, idx) => {
+    const hasLat = typeof p.latitud === 'number' && Number.isFinite(p.latitud);
+    const hasLng = typeof p.longitud === 'number' && Number.isFinite(p.longitud);
+    if (hasLat && hasLng) return p;
+    const fallback = seedById[p.id] ?? {
+      latitud: -25.2968 + idx * 0.005,
+      longitud: -57.585 + idx * 0.005,
+    };
+    return {
+      ...p,
+      latitud: hasLat ? p.latitud : fallback.latitud,
+      longitud: hasLng ? p.longitud : fallback.longitud,
+    };
+  });
+}
+
 function ensureLocalDataFile(): PersistedState {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -405,7 +436,9 @@ function ensureLocalDataFile(): PersistedState {
     return initial;
   }
   const raw = fs.readFileSync(DATA_FILE, 'utf-8');
-  return JSON.parse(raw) as PersistedState;
+  const parsed = JSON.parse(raw) as PersistedState;
+  parsed.proveedores = withDefaultCoordinates(parsed.proveedores);
+  return parsed;
 }
 
 function saveLocalDataFile(state: PersistedState): void {
@@ -427,14 +460,14 @@ export async function getDatabaseSnapshot(): Promise<AgroDatabaseSnapshot> {
       ]);
 
       if (!provRes.error && !prodRes.error) {
-        let proveedores = (provRes.data ?? []) as Proveedor[];
+        let proveedores = withDefaultCoordinates((provRes.data ?? []) as Proveedor[]);
         let productos = (prodRes.data ?? []) as Producto[];
 
         if (proveedores.length === 0 && productos.length === 0) {
           const seedProv = await supabase.from('proveedores').insert(local.proveedores).select();
           const seedProd = await supabase.from('productos').insert(local.productos).select();
           if (!seedProv.error && seedProv.data) {
-            proveedores = seedProv.data as Proveedor[];
+            proveedores = withDefaultCoordinates(seedProv.data as Proveedor[]);
           }
           if (!seedProd.error && seedProd.data) {
             productos = seedProd.data as Producto[];

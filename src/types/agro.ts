@@ -15,6 +15,8 @@ export interface Proveedor {
   telefono: string;
   email: string;
   horario: string;
+  latitud: number;
+  longitud: number;
   notas?: string;
 }
 

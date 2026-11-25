@@ -22,6 +22,15 @@ async function startServer() {
     res.json({ ok: true, service: 'AgroConecta AI' });
   });
 
+  app.get('/api/maps-config', (_req, res) => {
+    const apiKey = (
+      process.env.VITE_GOOGLE_MAPS_API_KEY ||
+      process.env.GOOGLE_MAPS_API_KEY ||
+      ''
+    ).trim();
+    res.json({ apiKey });
+  });
+
   app.get('/api/data', async (_req, res) => {
     try {
       const snapshot = await getDatabaseSnapshot();
@@ -108,6 +117,8 @@ async function startServer() {
         telefono: String(body.telefono).trim(),
         email: String(body.email || '').trim(),
         horario: String(body.horario || 'Lun a Sáb · 08:00 a 18:00').trim(),
+        latitud: Number.isFinite(Number(body.latitud)) ? Number(body.latitud) : -25.2968,
+        longitud: Number.isFinite(Number(body.longitud)) ? Number(body.longitud) : -57.585,
         notas: String(body.notas || '').trim(),
       });
       res.status(201).json(created);
